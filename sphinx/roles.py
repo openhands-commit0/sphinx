@@ -60,7 +60,14 @@ class XRefRole(ReferenceRole):
         reference node and must return a new (or the same) ``(title, target)``
         tuple.
         """
-        pass
+        if not has_explicit_title and self.fix_parens:
+            if target.endswith('()'):
+                title = title[:-2]
+            if target.endswith('[]'):
+                title = title[:-2]
+        if self.lowercase:
+            target = target.lower()
+        return title, target
 
     def result_nodes(self, document: nodes.document, env: BuildEnvironment, node: Element, is_ref: bool) -> tuple[list[Node], list[system_message]]:
         """Called before returning the finished nodes.  *node* is the reference
@@ -68,30 +75,164 @@ class XRefRole(ReferenceRole):
         This method can add other nodes and must return a ``(nodes, messages)``
         tuple (the usual return value of a role function).
         """
-        pass
+        return [node], []
 
 class AnyXRefRole(XRefRole):
     pass
 
 class PEP(ReferenceRole):
-    pass
+    def run(self) -> tuple[list[Node], list[system_message]]:
+        target_id = 'index-%s' % self.env.new_serialno('index')
+        entries = [('single', _('Python Enhancement Proposals; PEP %s') % self.target,
+                   target_id, '', None)]
+
+        index = addnodes.index(entries=entries)
+        target = nodes.target('', '', ids=[target_id])
+        self.inliner.document.note_explicit_target(target)
+
+        try:
+            pepnum = int(self.target)
+            ref = self.inliner.document.settings.pep_base_url + 'pep-%04d' % pepnum
+        except ValueError:
+            msg = self.inliner.reporter.error('invalid PEP number %s' % self.target,
+                                            line=self.lineno)
+            prb = self.inliner.problematic(self.rawtext, self.rawtext, msg)
+            return [prb], [msg]
+
+        if not self.has_explicit_title:
+            title = "PEP " + self.title
+            self.title = title
+
+        reference = nodes.reference('', '', internal=False, refuri=ref,
+                                  classes=['pep'])
+        if self.has_explicit_title:
+            reference += nodes.Text(self.title)
+        else:
+            reference += nodes.Text(title)
+
+        return [index, target, reference], []
 
 class RFC(ReferenceRole):
-    pass
+    def run(self) -> tuple[list[Node], list[system_message]]:
+        target_id = 'index-%s' % self.env.new_serialno('index')
+        entries = [('single', 'RFC; RFC %s' % self.target, target_id, '', None)]
+
+        index = addnodes.index(entries=entries)
+        target = nodes.target('', '', ids=[target_id])
+        self.inliner.document.note_explicit_target(target)
+
+        try:
+            rfcnum = int(self.target)
+            ref = self.inliner.document.settings.rfc_base_url + 'rfc%d.txt' % rfcnum
+        except ValueError:
+            msg = self.inliner.reporter.error('invalid RFC number %s' % self.target,
+                                            line=self.lineno)
+            prb = self.inliner.problematic(self.rawtext, self.rawtext, msg)
+            return [prb], [msg]
+
+        if not self.has_explicit_title:
+            title = "RFC " + self.title
+            self.title = title
+
+        reference = nodes.reference('', '', internal=False, refuri=ref,
+                                  classes=['rfc'])
+        if self.has_explicit_title:
+            reference += nodes.Text(self.title)
+        else:
+            reference += nodes.Text(title)
+
+        return [index, target, reference], []
 
 class GUILabel(SphinxRole):
     amp_re = re.compile('(?<!&)&(?![&\\s])')
 
+    def run(self) -> tuple[list[Node], list[system_message]]:
+        text = self.text.replace('&&', '\x00')
+        text = self.amp_re.sub('', text)
+        text = text.replace('\x00', '&')
+        span = nodes.inline(self.rawtext, text, classes=['guilabel'])
+        return [span], []
+
 class MenuSelection(GUILabel):
     BULLET_CHARACTER = '‣'
+
+    def run(self) -> tuple[list[Node], list[system_message]]:
+        text = self.text.replace('&&', '\x00')
+        text = self.amp_re.sub('', text)
+        text = text.replace('\x00', '&')
+        span = nodes.inline(self.rawtext, '', classes=['menuselection'])
+        for item in ws_re.split(text):
+            span += nodes.Text(item)
+            span += nodes.Text(self.BULLET_CHARACTER)
+        span.pop()
+        return [span], []
 
 class EmphasizedLiteral(SphinxRole):
     parens_re = re.compile('(\\\\\\\\|\\\\{|\\\\}|{|})')
 
+    def run(self) -> tuple[list[Node], list[system_message]]:
+        text = self.text.replace('\\', '\\\\')
+        text = self.parens_re.sub(r'\\\1', text)
+        return [nodes.literal(self.rawtext, text, classes=['file'])], []
+
 class Abbreviation(SphinxRole):
     abbr_re = re.compile('\\((.*)\\)$', re.DOTALL)
 
+    def run(self) -> tuple[list[Node], list[system_message]]:
+        text = self.text
+        m = self.abbr_re.search(text)
+        if m:
+            text = text[:m.start()].strip()
+            expl = m.group(1)
+        else:
+            expl = None
+        abbr = nodes.abbreviation(self.rawtext, text)
+        if expl:
+            abbr['explanation'] = expl
+        return [abbr], []
+
+def set_classes(options: dict[str, Any]) -> None:
+    """Set 'classes' key in options dict."""
+    if 'class' in options:
+        classes = options.get('classes', [])
+        classes.extend(options['class'])
+        del options['class']
+        options['classes'] = classes
+
+def code_role(typ: str, rawtext: str, text: str, lineno: int, inliner: docutils.parsers.rst.states.Inliner, options: dict[str, Any]={}, content: Sequence[str]=[]) -> tuple[list[Node], list[system_message]]:
+    """Role for code samples."""
+    set_classes(options)
+    classes = ['code']
+    if 'classes' in options:
+        classes.extend(options['classes'])
+    if 'language' in options:
+        classes.append('highlight')
+        classes.append(options['language'])
+    node = nodes.literal(rawtext, utils.unescape(text), classes=classes)
+    return [node], []
+
 class Manpage(ReferenceRole):
     _manpage_re = re.compile('^(?P<path>(?P<page>.+)[(.](?P<section>[1-9]\\w*)?\\)?)$')
+
+    def run(self) -> tuple[list[Node], list[system_message]]:
+        matched = self._manpage_re.match(self.target)
+        if not matched:
+            msg = self.inliner.reporter.error('invalid manpage reference %r' % self.target,
+                                            line=self.lineno)
+            prb = self.inliner.problematic(self.rawtext, self.rawtext, msg)
+            return [prb], [msg]
+
+        page = matched.group('page')
+        section = matched.group('section')
+        ref = self.inliner.document.settings.manpages_url % {'page': page, 'section': section}
+
+        if not self.has_explicit_title:
+            title = matched.group('path')
+            self.title = title
+
+        reference = nodes.reference('', '', internal=False, refuri=ref,
+                                  classes=['manpage'])
+        reference += nodes.Text(self.title)
+        return [reference], []
 code_role.options = {'class': docutils.parsers.rst.directives.class_option, 'language': docutils.parsers.rst.directives.unchanged}
 specific_docroles: dict[str, RoleFunction] = {'download': XRefRole(nodeclass=addnodes.download_reference), 'any': AnyXRefRole(warn_dangling=True), 'pep': PEP(), 'rfc': RFC(), 'guilabel': GUILabel(), 'menuselection': MenuSelection(), 'file': EmphasizedLiteral(), 'samp': EmphasizedLiteral(), 'abbr': Abbreviation(), 'manpage': Manpage()}

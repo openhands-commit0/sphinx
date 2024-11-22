@@ -43,7 +43,9 @@ class SphinxBaseReader(standalone.Reader):
         Creates a new document object which has a special reporter object good
         for logging.
         """
-        pass
+        document = super().new_document()
+        document.reporter = LoggingReporter.from_reporter(document.reporter)
+        return document
 
 class SphinxStandaloneReader(SphinxBaseReader):
     """
@@ -52,7 +54,9 @@ class SphinxStandaloneReader(SphinxBaseReader):
 
     def read_source(self, env: BuildEnvironment) -> str:
         """Read content from source and do post-process."""
-        pass
+        if isinstance(self.source, SphinxFileInput):
+            self.source.set_fs_encoding(env.fs_encoding)
+        return super().read()
 
 class SphinxI18nReader(SphinxBaseReader):
     """
@@ -69,7 +73,20 @@ class SphinxDummyWriter(UnfilteredWriter):
 
 def SphinxDummySourceClass(source: Any, *args: Any, **kwargs: Any) -> Any:
     """Bypass source object as is to cheat Publisher."""
-    pass
+    return source
+
+def create_publisher(app: Sphinx | None=None, doctree: nodes.document | None=None) -> Publisher:
+    """Create and return a publisher object."""
+    pub = Publisher(reader=None,
+                   parser=None,
+                   writer=SphinxDummyWriter(),
+                   source_class=SphinxDummySourceClass,
+                   destination=NullOutput())
+    pub.reader = SphinxStandaloneReader(app)
+    pub.parser = app.registry.create_source_parser(app, 'restructuredtext')
+    pub.document = doctree
+    pub.settings = pub.get_settings(traceback=True, warning_stream=None)
+    return pub
 
 class SphinxFileInput(FileInput):
     """A basic FileInput for Sphinx."""
@@ -77,3 +94,7 @@ class SphinxFileInput(FileInput):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         kwargs['error_handler'] = 'sphinx'
         super().__init__(*args, **kwargs)
+
+    def set_fs_encoding(self, fs_encoding: str) -> None:
+        """Set the filesystem encoding."""
+        self.fs_encoding = fs_encoding

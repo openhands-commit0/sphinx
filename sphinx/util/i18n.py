@@ -55,6 +55,32 @@ class CatalogRepository:
 
 def docname_to_domain(docname: str, compaction: bool | str) -> str:
     """Convert docname to domain for catalogs."""
-    pass
+    if not compaction:
+        return docname
+
+    if isinstance(compaction, str):
+        return compaction
+
+    parts = [part for part in docname.split(SEP) if part]
+    if len(parts) > 2:
+        return '-'.join(parts[:2])
+    else:
+        return docname
+
+def format_date(date_str: str | None=None, format: str='%b %d, %Y', language: str | None=None) -> str:
+    """Format a date according to the given format and language."""
+    if date_str:
+        try:
+            date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return date_str
+    else:
+        date = datetime.now(timezone.utc).date()
+
+    try:
+        result = babel.dates.format_date(date, format=format, locale=language)
+    except (ValueError, babel.core.UnknownLocaleError):
+        result = babel.dates.format_date(date, format=format)
+    return result
 date_format_mappings = {'%a': 'EEE', '%A': 'EEEE', '%b': 'MMM', '%B': 'MMMM', '%c': 'medium', '%-d': 'd', '%d': 'dd', '%-H': 'H', '%H': 'HH', '%-I': 'h', '%I': 'hh', '%-j': 'D', '%j': 'DDD', '%-m': 'M', '%m': 'MM', '%-M': 'm', '%M': 'mm', '%p': 'a', '%-S': 's', '%S': 'ss', '%U': 'WW', '%w': 'e', '%-W': 'W', '%W': 'WW', '%x': 'medium', '%X': 'medium', '%y': 'YY', '%Y': 'yyyy', '%Z': 'zzz', '%z': 'ZZZ', '%%': '%'}
 date_format_re = re.compile('(%s)' % '|'.join(date_format_mappings))
